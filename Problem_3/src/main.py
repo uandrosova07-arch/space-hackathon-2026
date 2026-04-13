@@ -15,9 +15,9 @@ def read_image_safe(path: Path):
         return None
 
 
-# -------------------------
+
 # Сохранение изображения
-# -------------------------
+
 def save_image_safe(path: Path, image: np.ndarray) -> bool:
     try:
         ext = path.suffix
