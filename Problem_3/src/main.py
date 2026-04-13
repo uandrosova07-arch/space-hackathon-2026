@@ -5,7 +5,6 @@ from typing import Tuple
 import os
 
 
-
 def read_image_safe(path: Path):
     try:
         data = np.fromfile(str(path), dtype=np.uint8)
@@ -16,7 +15,9 @@ def read_image_safe(path: Path):
         return None
 
 
-
+# -------------------------
+# Сохранение изображения
+# -------------------------
 def save_image_safe(path: Path, image: np.ndarray) -> bool:
     try:
         ext = path.suffix
@@ -35,6 +36,7 @@ def save_image_safe(path: Path, image: np.ndarray) -> bool:
         return False
 
 
+# Преобразование изображения
 
 def convert_image_spaces(bgr: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
@@ -42,11 +44,16 @@ def convert_image_spaces(bgr: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     return hsv, gray
 
 
+# Найти все изображения
 
 def find_all_images(root_dir: Path):
     exts = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
     return sorted([p for p in root_dir.rglob("*") if p.suffix.lower() in exts])
 
+
+# маска для облаков, где
+# 0 = облако
+# 1 = видимая поверхность
 
 
 def build_useful_mask(bgr: np.ndarray) -> np.ndarray:
@@ -56,22 +63,52 @@ def build_useful_mask(bgr: np.ndarray) -> np.ndarray:
     v = v.astype(np.float32) / 255.0
     s = s.astype(np.float32) / 255.0
 
-    
-    cloud = ((v > 0.65) & (s < 0.35)) | (v > 0.82)
+    cloud = (v > 0.75) & (s < 0.30)
 
     mask = np.ones_like(gray, dtype=np.uint8)
     mask[cloud] = 0
 
-    
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    cloud255 = ((mask == 0).astype(np.uint8) * 255)
-    cloud255 = cv2.dilate(cloud255, kernel, iterations=1)
-
-    mask = np.ones_like(gray, dtype=np.uint8)
-    mask[cloud255 > 0] = 0
-
     return mask
 
+
+def pixel_brightness(pixel: np.ndarray) -> float:
+    # Чем меньше значение, тем пиксель темнее, нужен для выбора самого темного пикселя среди кандидатов
+    return float(np.mean(pixel))
+
+
+def pixels_close(a: np.ndarray, b: np.ndarray, tol: int = 5) -> bool:
+    return np.all(np.abs(a.astype(np.int16) - b.astype(np.int16)) <= tol)
+   #проверяет, похожи ли 2 пикселя по цвету
+
+def all_pixels_different(pixels: list[np.ndarray], tol: int = 5) -> bool:
+    n = len(pixels)
+    for i in range(n):
+        for j in range(i + 1, n):
+            if pixels_close(pixels[i], pixels[j], tol=tol):
+                return False
+    return True
+   #проверяет, есть ли согласие (общие значния) между кадрами или же они отличаются
+
+def choose_pixel(pixels: list[np.ndarray]) -> np.ndarray:
+    n = len(pixels)
+   #выбирает итоговый пиксель для карты из нескольких кандидатов
+    if n == 1:
+        return pixels[0]
+
+    pixels_arr = np.array(pixels, dtype=np.uint8)
+
+    # Если все пиксели разные -> берем самый темный
+    if all_pixels_different(pixels, tol=5):
+        brightness_values = [pixel_brightness(p) for p in pixels]
+        darkest_idx = int(np.argmin(brightness_values))
+        return pixels[darkest_idx]
+
+    # Иначе используем медиану
+    return np.median(pixels_arr, axis=0).astype(np.uint8)
+
+
+
+# Сборка карты
 
 def build_final_map(images, masks):
     h, w, _ = images[0].shape
@@ -88,13 +125,13 @@ def build_final_map(images, masks):
                     pixels.append(img[y, x])
 
             if len(pixels) > 0:
-                pixels = np.array(pixels, dtype=np.uint8)
-                result[y, x] = np.median(pixels, axis=0).astype(np.uint8)
+                result[y, x] = choose_pixel(pixels)
                 filled[y, x] = True
 
     return result, filled
 
 
+# Группировка по размеру
 
 def group_by_shape(items):
     groups = {}
@@ -104,6 +141,7 @@ def group_by_shape(items):
     return groups
 
 
+#вывод данных
 
 def main():
     base_dir = Path(__file__).resolve().parent.parent
